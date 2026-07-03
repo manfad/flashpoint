@@ -1,0 +1,4 @@
+/target
+# flashpoint/jjckpt checkpoint stores are local-only
+.jj/
+.fp/
