@@ -418,7 +418,15 @@ function timelineHtml() {
 <style>
   html, body { margin: 0; padding: 0; background: transparent; }
   body { overflow: auto; }
-  #wrap { position: relative; }
+  /* Anchor the graph to the bottom so it grows upward like a tree. */
+  #wrap {
+    position: relative;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    justify-content: flex-end;
+    align-items: flex-start;
+  }
   canvas { display: block; cursor: default; }
   #tip {
     position: fixed; display: none; z-index: 10; pointer-events: none;
@@ -442,6 +450,7 @@ const PALETTE = ["#3794ff", "#e5399e", "#8bc34a", "#f5a623", "#b180d7", "#26c6da
 const ROW_H = 30, LANE_W = 18, PAD = 14, R = 5.5;
 
 let nodes = [];   // {id,label,time,current,lane,x,y,color,onCurrentPath,parents[]}
+let selected = null;   // {after, before} — highlighted pair after a click
 
 function layout(model) {
   const rows = model.rows || [];
@@ -549,6 +558,21 @@ function draw() {
     }
   }
   ctx.globalAlpha = 1;
+
+  // Highlight the pressed pair: green = anchor, red = its parent.
+  if (selected) {
+    const ring = (id, color) => {
+      const n = nodes.find((x) => x.id === id);
+      if (!n) return;
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 2.5;
+      ctx.beginPath();
+      ctx.arc(n.x, n.y, R + 4, 0, Math.PI * 2);
+      ctx.stroke();
+    };
+    ring(selected.after, "#89d185");
+    ring(selected.before, "#f48771");
+  }
 }
 
 function hit(ev) {
@@ -576,7 +600,11 @@ canvas.addEventListener("mousemove", (ev) => {
 canvas.addEventListener("mouseleave", () => { tip.style.display = "none"; });
 canvas.addEventListener("click", (ev) => {
   const n = hit(ev);
-  if (n && !n.current) vscode.postMessage({ type: "select", id: n.id });
+  if (n && !n.current) {
+    selected = { after: n.id, before: n.parents[0] || null };
+    draw();
+    vscode.postMessage({ type: "select", id: n.id });
+  }
 });
 
 function escapeHtml(s) {
@@ -588,9 +616,11 @@ window.addEventListener("message", (ev) => {
   const msgEl = document.getElementById("msg");
   if (msg.type === "model") {
     msgEl.textContent = "";
+    const firstLoad = !nodes.length;
     layout(msg.model);
     draw();
     if (!nodes.length) msgEl.textContent = "(no anchors yet)";
+    if (firstLoad) window.scrollTo(0, document.body.scrollHeight);
   } else if (msg.type === "error") {
     msgEl.textContent = msg.message;
   }
