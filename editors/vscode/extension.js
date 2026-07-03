@@ -453,7 +453,7 @@ const ROW_H = 30, LANE_W = 18, PAD = 14, R = 5.5;
 let nodes = [];   // {id,label,time,current,lane,x,y,color,onCurrentPath,parents[]}
 let selected = null;   // {after, before} — highlighted pair after a click
 let hoverId = null;
-const SEL_GREEN = "#7ee287", SEL_RED = "#ff8a80";
+const SEL_GREEN = "#7ee287";
 
 function layout(model) {
   const rows = model.rows || [];
@@ -551,18 +551,16 @@ function draw() {
   ctx.globalAlpha = 1;
   ctx.lineWidth = 2.5;
 
-  // Nodes on top. Working copy = hollow ring. Selection recolors the dot
-  // itself (green = anchor, red = parent) with a soft glow; hover enlarges.
+  // Nodes on top. Working copy = hollow ring. Selection recolors the
+  // pressed anchor and its parent green (no glow); hover enlarges.
   for (const n of nodes) {
     const isAfter = selected && selected.after === n.id;
     const isBefore = selected && selected.before === n.id;
     const isHover = hoverId === n.id;
-    const color = isAfter ? SEL_GREEN : isBefore ? SEL_RED : n.color;
+    const color = isAfter || isBefore ? SEL_GREEN : n.color;
     const r = R + (isHover ? 2 : 0) + (isAfter || isBefore ? 1 : 0);
 
     ctx.globalAlpha = n.onCurrentPath || n.current || isAfter || isBefore ? 1 : 0.55;
-    ctx.shadowColor = color;
-    ctx.shadowBlur = isAfter || isBefore ? 12 : isHover ? 9 : 0;
 
     if (n.current && !isAfter && !isBefore) {
       ctx.strokeStyle = color;
@@ -576,8 +574,6 @@ function draw() {
       ctx.beginPath();
       ctx.arc(n.x, n.y, r, 0, Math.PI * 2);
       ctx.fill();
-      // Crisp core so the glow reads as light, not blur.
-      ctx.shadowBlur = 0;
       ctx.fillStyle = "rgba(0,0,0,0.25)";
       ctx.beginPath();
       ctx.arc(n.x, n.y, Math.max(r - 3.5, 1.5), 0, Math.PI * 2);
@@ -587,7 +583,6 @@ function draw() {
       ctx.arc(n.x, n.y, Math.max(r - 4.5, 1), 0, Math.PI * 2);
       ctx.fill();
     }
-    ctx.shadowBlur = 0;
   }
   ctx.globalAlpha = 1;
 }
