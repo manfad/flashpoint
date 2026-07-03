@@ -1,0 +1,73 @@
+{
+  "name": "flashpoint",
+  "displayName": "Flashpoint",
+  "description": "Anchors around AI agent edits: inspect diffs and timetravel back without touching your git history. No timeline is ever lost.",
+  "version": "0.1.0",
+  "publisher": "manfad",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/manfad/flashpoint.git"
+  },
+  "icon": "media/icon.png",
+  "keywords": ["flashpoint", "checkpoint", "ai", "agent", "cursor", "claude", "codex", "timetravel", "snapshot", "jj"],
+  "engines": { "vscode": "^1.80.0" },
+  "categories": ["SCM Providers", "AI", "Other"],
+  "main": "./extension.js",
+  "activationEvents": [
+    "onStartupFinished",
+    "onView:flashpoint.tree"
+  ],
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        { "id": "flashpoint", "title": "Flashpoint", "icon": "media/icon.svg" }
+      ]
+    },
+    "views": {
+      "flashpoint": [
+        { "id": "flashpoint.tree", "name": "Agent Session" }
+      ]
+    },
+    "viewsWelcome": [
+      {
+        "view": "flashpoint.tree",
+        "contents": "The `fp` binary was not found.\n\nInstall it, then set `flashpoint.binary` if it is not on your PATH.\n\n[Install instructions](https://github.com/manfad/flashpoint)\n\n[Re-check](command:flashpoint.recheck)",
+        "when": "flashpoint.fpMissing"
+      }
+    ],
+    "commands": [
+      { "command": "flashpoint.refresh", "title": "Flashpoint: Refresh", "icon": "$(refresh)" },
+      { "command": "flashpoint.anchor", "title": "Flashpoint: Anchor (save safe point)", "icon": "$(shield)" },
+      { "command": "flashpoint.timetravel", "title": "Flashpoint: Timetravel…", "icon": "$(history)" },
+      { "command": "flashpoint.openDiff", "title": "Flashpoint: Open Diff" },
+      { "command": "flashpoint.compareCurrent", "title": "Flashpoint: Compare With Current", "icon": "$(diff)" },
+      { "command": "flashpoint.status", "title": "Flashpoint: Status" },
+      { "command": "flashpoint.recheck", "title": "Flashpoint: Re-check fp binary" }
+    ],
+    "menus": {
+      "view/title": [
+        { "command": "flashpoint.anchor", "when": "view == flashpoint.tree", "group": "navigation@1" },
+        { "command": "flashpoint.refresh", "when": "view == flashpoint.tree", "group": "navigation@2" }
+      ],
+      "view/item/context": [
+        { "command": "flashpoint.timetravel", "when": "view == flashpoint.tree && viewItem =~ /^checkpoint/", "group": "inline@1" },
+        { "command": "flashpoint.compareCurrent", "when": "view == flashpoint.tree && viewItem =~ /^checkpoint/", "group": "inline@2" }
+      ]
+    },
+    "configuration": {
+      "title": "Flashpoint",
+      "properties": {
+        "flashpoint.binary": {
+          "type": "string",
+          "default": "fp",
+          "description": "Path to the fp binary (default: fp on PATH; ~/.cargo/bin and ~/.local/bin are also probed)."
+        },
+        "flashpoint.pollSeconds": {
+          "type": "number",
+          "default": 2,
+          "description": "How often to poll the store for changes while the view is visible."
+        }
+      }
+    }
+  }
+}

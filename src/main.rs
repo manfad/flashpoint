@@ -3,6 +3,7 @@ mod hook;
 mod ids;
 mod log;
 mod meta;
+mod porcelain;
 mod repo;
 mod safezone;
 mod timeline;
@@ -67,6 +68,26 @@ enum Command {
     /// Machine-readable timeline JSON for UI surfaces (porcelain).
     #[command(name = "_timeline", hide = true)]
     Timeline,
+    /// Un-anchored changes + anchors on the current timeline.
+    Status,
+    /// Anchors bucketed by git commit (JSON porcelain).
+    #[command(name = "_stages", hide = true)]
+    Stages,
+    /// Change ids on the current path, one per line (porcelain).
+    #[command(name = "_active", hide = true)]
+    Active,
+    /// Changed files of an anchor: status<TAB>path lines (porcelain).
+    #[command(name = "_files", hide = true)]
+    Files { id: String },
+    /// Parent anchor id (porcelain).
+    #[command(name = "_parent", hide = true)]
+    Parent { id: String },
+    /// Raw file content at a revision; `<id>-` means its parent (porcelain).
+    #[command(name = "_show", hide = true)]
+    Show { rev: String, path: String },
+    /// Operation-log head fingerprint for polling (porcelain).
+    #[command(name = "_tip", hide = true)]
+    Tip,
     /// Put files back exactly as they were at an anchor. Nothing forks
     /// until you change something afterwards.
     Timetravel {
@@ -132,6 +153,16 @@ fn main() -> Result<()> {
             let fp = Fp::open(&cwd)?;
             timeline::print(&fp)?;
         }
+        Command::Status => {
+            let mut fp = Fp::open(&cwd)?;
+            porcelain::status(&mut fp)?;
+        }
+        Command::Stages => porcelain::stages(&Fp::open(&cwd)?)?,
+        Command::Active => porcelain::active(&Fp::open(&cwd)?)?,
+        Command::Files { id } => porcelain::files(&Fp::open(&cwd)?, &id)?,
+        Command::Parent { id } => porcelain::parent(&Fp::open(&cwd)?, &id)?,
+        Command::Show { rev, path } => porcelain::show(&Fp::open(&cwd)?, &rev, &path)?,
+        Command::Tip => porcelain::tip(&Fp::open(&cwd)?)?,
         Command::Timetravel { id, yes } => {
             let mut fp = Fp::open(&cwd)?;
             timetravel::run(&mut fp, &id, yes)?;

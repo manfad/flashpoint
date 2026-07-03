@@ -222,8 +222,13 @@ When porting UI surfaces, rename the go-back button/command accordingly.
    plus `fp hook --speedster <slug> --phase pre|post` (stdin payload JSON,
    Human safepoints, prompt-derived titles, turn-active marker,
    second-speedster block).
-6. Point the VS Code extension (first-priority surface) at flashpoint;
-   conformance-test against jjckpt output on the same repo.
+6. ~~VS Code extension.~~ DONE — forked from jjckpt into `editors/vscode/`
+   (Agent Session tree only; the timeline tab was dropped by decision).
+   Ships as `flashpoint-*.vsix`; talks to the native `fp` binary via the
+   ported porcelain (`_stages`, `_active`, `_files`, `_parent`, `_show`,
+   `_tip`), so it needs no jj CLI and no Node engine. jjckpt's undo/fork
+   buttons were removed (no `undo` by design; forks are the lazy flashpoint
+   event).
 7. Release binaries (mac/linux/win) — this is the new cost fork/CLI didn't have.
 
 Dev note: never run the bare `jj` CLI inside an fp-managed directory for
