@@ -2,7 +2,7 @@
   "name": "flashpoint",
   "displayName": "Flashpoint",
   "description": "Anchors around AI agent edits: inspect diffs and timetravel back without touching your git history. No timeline is ever lost.",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "publisher": "manfad",
   "repository": {
     "type": "git",

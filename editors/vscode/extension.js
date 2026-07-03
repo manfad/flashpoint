@@ -433,11 +433,12 @@ function timelineHtml() {
     background: var(--vscode-editorHoverWidget-background, #252526);
     color: var(--vscode-editorHoverWidget-foreground, #ccc);
     border: 1px solid var(--vscode-editorHoverWidget-border, #454545);
-    border-radius: 4px; padding: 4px 8px;
+    border-radius: 6px; padding: 5px 10px;
     font: 12px var(--vscode-font-family, sans-serif);
     max-width: 260px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.35);
   }
-  #tip .time { opacity: 0.75; font-size: 11px; }
+  #tip .time { opacity: 0.7; font-size: 11px; margin-top: 1px; font-variant-numeric: tabular-nums; }
   #msg { padding: 10px; font: 12px var(--vscode-font-family, sans-serif); opacity: 0.8; }
 </style>
 </head>
@@ -451,6 +452,8 @@ const ROW_H = 30, LANE_W = 18, PAD = 14, R = 5.5;
 
 let nodes = [];   // {id,label,time,current,lane,x,y,color,onCurrentPath,parents[]}
 let selected = null;   // {after, before} — highlighted pair after a click
+let hoverId = null;
+const SEL_GREEN = "#7ee287", SEL_RED = "#ff8a80";
 
 function layout(model) {
   const rows = model.rows || [];
@@ -519,60 +522,74 @@ function draw() {
   ctx.lineWidth = 2.5;
   ctx.lineCap = "round";
 
+  const edgePath = (n, p) => {
+    ctx.beginPath();
+    ctx.moveTo(n.x, n.y);
+    if (p.x === n.x) {
+      ctx.lineTo(p.x, p.y);
+    } else {
+      const bend = Math.min(p.y - ROW_H * 0.8, p.y - 12);
+      ctx.lineTo(n.x, bend);
+      ctx.bezierCurveTo(n.x, p.y - 4, (n.x + p.x) / 2, p.y, p.x, p.y);
+    }
+  };
+
   // Edges first (child -> parent), colored by the child's lane.
   for (const n of nodes) {
     for (const pid of n.parents) {
       const p = byId.get(pid);
       if (!p) continue;
+      const isSelectedEdge =
+        selected && selected.after === n.id && selected.before === pid;
       ctx.strokeStyle = n.color;
-      ctx.globalAlpha = n.onCurrentPath ? 1 : 0.55;
-      ctx.beginPath();
-      ctx.moveTo(n.x, n.y);
-      if (p.x === n.x) {
-        ctx.lineTo(p.x, p.y);
-      } else {
-        const bend = Math.min(p.y - ROW_H * 0.8, p.y - 12);
-        ctx.lineTo(n.x, bend);
-        ctx.bezierCurveTo(n.x, p.y - 4, (n.x + p.x) / 2, p.y, p.x, p.y);
-      }
+      ctx.lineWidth = isSelectedEdge ? 3.5 : 2.5;
+      ctx.globalAlpha = isSelectedEdge ? 1 : n.onCurrentPath ? 0.95 : 0.45;
+      edgePath(n, p);
       ctx.stroke();
     }
   }
   ctx.globalAlpha = 1;
+  ctx.lineWidth = 2.5;
 
-  // Nodes on top. Working copy = hollow ring.
+  // Nodes on top. Working copy = hollow ring. Selection recolors the dot
+  // itself (green = anchor, red = parent) with a soft glow; hover enlarges.
   for (const n of nodes) {
-    ctx.globalAlpha = n.onCurrentPath || n.current ? 1 : 0.6;
-    if (n.current) {
-      ctx.strokeStyle = n.color;
+    const isAfter = selected && selected.after === n.id;
+    const isBefore = selected && selected.before === n.id;
+    const isHover = hoverId === n.id;
+    const color = isAfter ? SEL_GREEN : isBefore ? SEL_RED : n.color;
+    const r = R + (isHover ? 2 : 0) + (isAfter || isBefore ? 1 : 0);
+
+    ctx.globalAlpha = n.onCurrentPath || n.current || isAfter || isBefore ? 1 : 0.55;
+    ctx.shadowColor = color;
+    ctx.shadowBlur = isAfter || isBefore ? 12 : isHover ? 9 : 0;
+
+    if (n.current && !isAfter && !isBefore) {
+      ctx.strokeStyle = color;
       ctx.lineWidth = 3;
       ctx.beginPath();
-      ctx.arc(n.x, n.y, R, 0, Math.PI * 2);
+      ctx.arc(n.x, n.y, r, 0, Math.PI * 2);
       ctx.stroke();
       ctx.lineWidth = 2.5;
     } else {
-      ctx.fillStyle = n.color;
+      ctx.fillStyle = color;
       ctx.beginPath();
-      ctx.arc(n.x, n.y, R, 0, Math.PI * 2);
+      ctx.arc(n.x, n.y, r, 0, Math.PI * 2);
+      ctx.fill();
+      // Crisp core so the glow reads as light, not blur.
+      ctx.shadowBlur = 0;
+      ctx.fillStyle = "rgba(0,0,0,0.25)";
+      ctx.beginPath();
+      ctx.arc(n.x, n.y, Math.max(r - 3.5, 1.5), 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = color;
+      ctx.beginPath();
+      ctx.arc(n.x, n.y, Math.max(r - 4.5, 1), 0, Math.PI * 2);
       ctx.fill();
     }
+    ctx.shadowBlur = 0;
   }
   ctx.globalAlpha = 1;
-
-  // Highlight the pressed pair: green = anchor, red = its parent.
-  if (selected) {
-    const ring = (id, color) => {
-      const n = nodes.find((x) => x.id === id);
-      if (!n) return;
-      ctx.strokeStyle = color;
-      ctx.lineWidth = 2.5;
-      ctx.beginPath();
-      ctx.arc(n.x, n.y, R + 4, 0, Math.PI * 2);
-      ctx.stroke();
-    };
-    ring(selected.after, "#89d185");
-    ring(selected.before, "#f48771");
-  }
 }
 
 function hit(ev) {
@@ -585,6 +602,11 @@ const canvas = document.getElementById("c");
 const tip = document.getElementById("tip");
 canvas.addEventListener("mousemove", (ev) => {
   const n = hit(ev);
+  const newHover = n ? n.id : null;
+  if (newHover !== hoverId) {
+    hoverId = newHover;
+    draw();
+  }
   if (n) {
     canvas.style.cursor = "pointer";
     tip.innerHTML = "<div>" + escapeHtml(n.label) + "</div><div class='time'>" + escapeHtml(n.time) + "</div>";
@@ -597,7 +619,10 @@ canvas.addEventListener("mousemove", (ev) => {
     tip.style.display = "none";
   }
 });
-canvas.addEventListener("mouseleave", () => { tip.style.display = "none"; });
+canvas.addEventListener("mouseleave", () => {
+  tip.style.display = "none";
+  if (hoverId) { hoverId = null; draw(); }
+});
 canvas.addEventListener("click", (ev) => {
   const n = hit(ev);
   if (n && !n.current) {
