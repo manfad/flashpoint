@@ -14,6 +14,72 @@ timetraveling and reality forks onto a new timeline (a **flashpoint** — the
 tool is named after its signature event). Install one binary. That's the
 whole setup.
 
+## Install
+
+The native executable is `fp`. The npm package is `@manfad/flashpoint`
+(unscoped `fp`, `fpoint`, and `fpt` are already taken on npm); it installs
+`fp`, `flashpoint`, and `flashp` launchers.
+
+Run without a permanent install:
+
+```sh
+npx @manfad/flashpoint --help
+npx @manfad/flashpoint anchor
+```
+
+Install globally:
+
+```sh
+npm install -g @manfad/flashpoint
+fp --help
+fp setup   # put fp on PATH + wire agent hooks (see below)
+```
+
+The npm package downloads the matching native binary from GitHub Releases. If
+a release binary is not available for your platform, the installer falls back
+to `cargo build --release --locked` when Rust is installed.
+
+The VS Code extension offers this same setup on first run, jjckpt-style: a
+toast, then a native tick-list of agents (detected ones pre-ticked, each row
+showing its `fp check` hook state) which runs `fp setup --agents … --yes`
+under the hood — the CLI stays the single source of truth for hook configs.
+Also available anytime as `Flashpoint: Setup` / `Flashpoint: Check Setup`.
+
+### `fp setup` — hooks + PATH
+
+```sh
+fp setup
+```
+
+One command finishes the install on a machine: it copies `fp` to a stable
+per-user path (`~/.local/bin`, or `%LOCALAPPDATA%\flashpoint\bin` on Windows),
+puts that dir on PATH (shell rc on macOS/Linux, user registry on Windows —
+never `setx`, which truncates PATH), adds `.jj/` + `.fp/` to the global git
+excludes, then shows a tick-list of speedsters (detected ones pre-ticked) and
+writes each one's native hook config: pre-turn Human safepoint + post-turn
+anchor. Hook commands embed the stable *absolute* path, so they work in
+GUI-launched agents that never see the shell PATH.
+
+Wiring is non-destructive: unrelated hook entries and settings are kept, stale
+flashpoint/jjckpt entries are replaced (running jjckpt hooks alongside would
+double-anchor the same `.jj` store), and every touched file gets a `.backup`.
+Safe to re-run any time — do so after upgrading `flashp` to refresh the
+installed copy. Non-interactive:
+
+```sh
+fp setup --agents claude-code,codex --yes   # explicit list
+fp setup --all --yes                        # every known speedster
+```
+
+The picker is a Vite-style tick list (dialoguer): ↑/↓ to move, space to
+toggle, enter to confirm, Esc to wire nothing; each row shows the agent's
+current hook state.
+
+`fp check` (also `fp setup --check`) reports without changing anything —
+binary, PATH, global excludes, and per-speedster hook state (wired / partial /
+stale binary path / jjckpt hooks still active / not wired). It exits 1 when
+anything needs attention, so it can gate scripts.
+
 ## Vocabulary (The Flash universe — this is the brand)
 
 - **speedster** — an agent (Claude Code, Codex, Cursor, ...). Every speedster's
@@ -229,7 +295,14 @@ When porting UI surfaces, rename the go-back button/command accordingly.
    `_tip`), so it needs no jj CLI and no Node engine. jjckpt's undo/fork
    buttons were removed (no `undo` by design; forks are the lazy flashpoint
    event).
-7. Release binaries (mac/linux/win) — this is the new cost fork/CLI didn't have.
+7. ~~`fp setup`~~ DONE — CLI setup wizard replacing jjckpt's VS Code-only
+   wizard (see "`fp setup` — hooks + PATH" above): stable binary install +
+   PATH handling (shell rc / Windows user registry), global git excludes,
+   agent tick-list (detected pre-ticked, or `--agents`/`--all --yes`), native
+   hook configs per speedster in jjckpt's proven formats (claude-code, codex,
+   cursor, gemini, antigravity, opencode plugin, vscode-copilot),
+   merge-not-clobber with `.backup`s, jjckpt entries retired.
+8. Release binaries (mac/linux/win) — this is the new cost fork/CLI didn't have.
 
 Dev note: never run the bare `jj` CLI inside an fp-managed directory for
 inspection — it snapshots the working copy under jj's own rules (no safe-zone)

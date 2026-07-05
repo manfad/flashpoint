@@ -2,7 +2,7 @@
   "name": "flashpoint",
   "displayName": "Flashpoint",
   "description": "Anchors around AI agent edits: inspect diffs and timetravel back without touching your git history. No timeline is ever lost.",
-  "version": "0.1.4",
+  "version": "0.2.0",
   "publisher": "manfad",
   "repository": {
     "type": "git",
@@ -33,7 +33,7 @@
     "viewsWelcome": [
       {
         "view": "flashpoint.tree",
-        "contents": "The `fp` binary was not found.\n\nInstall it, then set `flashpoint.binary` if it is not on your PATH.\n\n[Install instructions](https://github.com/manfad/flashpoint)\n\n[Re-check](command:flashpoint.recheck)",
+        "contents": "The `fp` binary was not found.\n\n[Set up Flashpoint](command:flashpoint.setup)\n\nSetup helps install `fp` (npm), then asks which AI agents you use and wires their checkpoint hooks. Set `flashpoint.binary` if you install somewhere custom.\n\n[Install instructions](https://github.com/manfad/flashpoint)\n\n[Re-check](command:flashpoint.recheck)",
         "when": "flashpoint.fpMissing"
       }
     ],
@@ -43,14 +43,20 @@
       { "command": "flashpoint.timetravel", "title": "Flashpoint: Timetravel…", "icon": "$(history)" },
       { "command": "flashpoint.openDiff", "title": "Flashpoint: Open Diff" },
       { "command": "flashpoint.compareCurrent", "title": "Flashpoint: Compare With Current", "icon": "$(diff)" },
+      { "command": "flashpoint.timelinePrime", "title": "Flashpoint: Make Prime Timeline", "icon": { "light": "media/crown-light.svg", "dark": "media/crown.svg" } },
+      { "command": "flashpoint.timelineTravel", "title": "Flashpoint: Travel To Selected Anchor", "icon": "$(history)" },
       { "command": "flashpoint.status", "title": "Flashpoint: Status" },
-      { "command": "flashpoint.recheck", "title": "Flashpoint: Re-check fp binary" }
+      { "command": "flashpoint.recheck", "title": "Flashpoint: Re-check fp binary" },
+      { "command": "flashpoint.setup", "title": "Flashpoint: Setup (install fp + wire agent hooks)", "icon": "$(tools)" },
+      { "command": "flashpoint.check", "title": "Flashpoint: Check Setup" }
     ],
     "menus": {
       "view/title": [
         { "command": "flashpoint.anchor", "when": "view == flashpoint.tree", "group": "navigation@1" },
         { "command": "flashpoint.refresh", "when": "view == flashpoint.tree", "group": "navigation@2" },
-        { "command": "flashpoint.refresh", "when": "view == flashpoint.timeline", "group": "navigation@1" }
+        { "command": "flashpoint.timelinePrime", "when": "view == flashpoint.timeline && flashpoint.timelineAnchorSelected", "group": "navigation@1" },
+        { "command": "flashpoint.timelineTravel", "when": "view == flashpoint.timeline && flashpoint.timelineAnchorSelected", "group": "navigation@2" },
+        { "command": "flashpoint.refresh", "when": "view == flashpoint.timeline", "group": "navigation@3" }
       ],
       "view/item/context": [
         { "command": "flashpoint.timetravel", "when": "view == flashpoint.tree && viewItem =~ /^checkpoint/", "group": "inline@1" },

@@ -3,6 +3,7 @@
 // Shells out to the native `fp` binary (no jj, no Node engine required).
 
 const vscode = require("vscode");
+const setup = require("./setup");
 const { execFile } = require("child_process");
 const path = require("path");
 const os = require("os");
@@ -262,13 +263,17 @@ class CheckpointProvider {
       const [status, ...rest] = line.split("\t");
       return { status: (status || "").trim(), path: rest.join("\t") };
     });
+    const strike = (s) => String(s).replace(/[^\s]/g, "$&\u0336");
     return rows.map((row) => {
-      const item = new vscode.TreeItem(path.posix.basename(row.path), vscode.TreeItemCollapsibleState.None);
+      const deleted = row.status === "D";
+      const basename = path.posix.basename(row.path);
+      const dirname = path.posix.dirname(row.path);
+      const item = new vscode.TreeItem(deleted ? strike(basename) : basename, vscode.TreeItemCollapsibleState.None);
       item.kind = "file";
       item.hash = hash;
       item.path = row.path;
       item.status = row.status;
-      item.description = path.posix.dirname(row.path) === "." ? "" : path.posix.dirname(row.path);
+      item.description = dirname === "." ? "" : deleted ? strike(dirname) : dirname;
       item.resourceUri = absoluteFileUri(row.path).with({ fragment: `${hash}:${row.status}` });
       item.command = { command: "flashpoint.openDiff", title: "Open Diff", arguments: [item] };
       return item;
@@ -288,11 +293,16 @@ class CheckpointProvider {
     if (uri.scheme === "file" && uri.fragment) {
       const [, status] = uri.fragment.split(":");
       if (!status) return undefined;
-      const colors = { A: "charts.green", M: "charts.yellow", D: "charts.red", R: "charts.blue" };
-      return {
-        badge: status,
-        color: new vscode.ThemeColor(colors[status] || "foreground"),
-      };
+      const relPath = path.relative(repoCwd(), uri.fsPath).split(path.sep).join("/");
+      if (this.compare && this.compare.path === relPath) {
+        if (this.compare.after && uri.fragment.startsWith(`${this.compare.after}:`)) {
+          return { badge: status, color: new vscode.ThemeColor("charts.green") };
+        }
+        if (this.compare.before && uri.fragment.startsWith(`${this.compare.before}:`)) {
+          return { badge: status, color: new vscode.ThemeColor("charts.red") };
+        }
+      }
+      return { badge: status };
     }
     return undefined;
   }
@@ -345,17 +355,17 @@ async function compareCurrent(item) {
 async function openAnchorChanges(hash, provider) {
   let raw = "";
   try { raw = await run(["_files", hash]); } catch { return; }
+  let before = "";
+  try { before = (await run(["_parent", hash])).trim(); } catch { /* root */ }
+  if (provider) provider.setCompare({ before: before || null, after: hash, path: null });
   const files = raw.split(/\r?\n/).filter(Boolean).map((line) => {
     const [status, ...rest] = line.split("\t");
     return { status: (status || "").trim(), path: rest.join("\t") };
   });
   if (!files.length) {
     vscode.window.setStatusBarMessage("flashpoint: anchor changed no files", 3000);
-    return;
+    return before || null;
   }
-  let before = "";
-  try { before = (await run(["_parent", hash])).trim(); } catch { /* root */ }
-  if (provider) provider.setCompare({ before: before || null, after: hash, path: null });
   const triples = files.map((f) => [
     absoluteFileUri(f.path),
     revUri(f.path, hash + "-"),
@@ -370,6 +380,7 @@ async function openAnchorChanges(hash, provider) {
   } catch {
     await openDiff({ hash, path: files[0].path, status: files[0].status }, provider);
   }
+  return before || null;
 }
 
 // ---------------------------------------------------------------- timeline
@@ -405,6 +416,10 @@ class TimelineWebviewProvider {
       this.view.webview.postMessage({ type: "error", message: String(err.message || err) });
     }
   }
+
+  makePrime(id) {
+    if (this.view && id) this.view.webview.postMessage({ type: "prime", id });
+  }
 }
 
 function timelineHtml() {
@@ -416,18 +431,19 @@ function timelineHtml() {
 <meta http-equiv="Content-Security-Policy"
       content="default-src 'none'; style-src 'unsafe-inline'; script-src 'nonce-${nonce}';">
 <style>
-  html, body { margin: 0; padding: 0; background: transparent; }
+  html, body { margin: 0; padding: 0; width: 100%; background: transparent; }
   body { overflow: auto; }
   /* Anchor the graph to the bottom so it grows upward like a tree. */
   #wrap {
     position: relative;
+    width: 100%;
     min-height: 100vh;
     display: flex;
     flex-direction: column;
     justify-content: flex-end;
-    align-items: flex-start;
+    align-items: stretch;
   }
-  canvas { display: block; cursor: default; }
+  canvas { display: block; width: 100%; cursor: default; }
   #tip {
     position: fixed; display: none; z-index: 10; pointer-events: none;
     background: var(--vscode-editorHoverWidget-background, #252526);
@@ -451,15 +467,37 @@ const PALETTE = ["#3794ff", "#e5399e", "#8bc34a", "#f5a623", "#b180d7", "#26c6da
 const ROW_H = 30, LANE_W = 18, PAD = 14, R = 5.5;
 
 let nodes = [];   // {id,label,time,current,lane,x,y,color,onCurrentPath,parents[]}
+let modelRows = [];
 let selected = null;   // {after, before} — highlighted pair after a click
 let hoverId = null;
+let primeId = null;
 const SEL_GREEN = "#7ee287";
+const SEL_RED = "#f14c4c";
+const SEL_EDGE = "#ffffff";
+const CURRENT_EDGE = "#3794ff";
+const ALT_EDGE = "#7a7a7a";
 
 function layout(model) {
   const rows = model.rows || [];
   const byId = new Map(rows.map((r, i) => [r.id, i]));
+  const rowById = new Map(rows.map((r) => [r.id, r]));
   const active = [];       // lane slot -> expected commit id (or null)
   const laneOf = new Array(rows.length).fill(0);
+  const primePath = new Set();
+
+  if (primeId && rowById.has(primeId)) {
+    const visit = (id) => {
+      if (primePath.has(id)) return;
+      const row = rowById.get(id);
+      if (!row) return;
+      primePath.add(id);
+      for (const parent of row.parents || []) visit(parent);
+    };
+    visit(primeId);
+  } else {
+    primeId = null;
+    for (const row of rows) if (row.onCurrentPath || row.current) primePath.add(row.id);
+  }
 
   rows.forEach((row, i) => {
     const waiting = [];
@@ -486,18 +524,23 @@ function layout(model) {
     }
   });
 
-  nodes = rows.map((row, i) => ({
-    id: row.id,
-    label: row.label || row.subject || row.id,
-    time: shortTime(row.time),
-    current: !!row.current,
-    onCurrentPath: !!row.onCurrentPath,
-    parents: (row.parents || []).filter((p) => byId.has(p)),
-    lane: laneOf[i],
-    x: PAD + laneOf[i] * LANE_W,
-    y: PAD + i * ROW_H,
-    color: PALETTE[laneOf[i] % PALETTE.length],
-  }));
+  nodes = rows.map((row, i) => {
+    const prime = primePath.has(row.id);
+    const lane = prime ? 0 : laneOf[i] + 1;
+    return {
+      id: row.id,
+      label: row.label || row.subject || row.id,
+      time: shortTime(row.time),
+      current: !!row.current,
+      onCurrentPath: !!row.onCurrentPath,
+      prime,
+      parents: (row.parents || []).filter((p) => byId.has(p)),
+      lane,
+      x: PAD + lane * LANE_W,
+      y: PAD + i * ROW_H,
+      color: PALETTE[lane % PALETTE.length],
+    };
+  });
 }
 
 function shortTime(t) {
@@ -509,7 +552,14 @@ function draw() {
   const canvas = document.getElementById("c");
   const byId = new Map(nodes.map((n) => [n.id, n]));
   const maxLane = nodes.reduce((m, n) => Math.max(m, n.lane), 0);
-  const cssW = Math.max(PAD * 2 + (maxLane + 1) * LANE_W + 140, 160);
+  const graphW = PAD * 2 + (maxLane + 1) * LANE_W + 140;
+  const viewportW = Math.ceil(
+    document.documentElement.clientWidth ||
+    document.body.clientWidth ||
+    window.innerWidth ||
+    0
+  );
+  const cssW = Math.max(graphW, viewportW, 160);
   const cssH = nodes.length ? PAD * 2 + (nodes.length - 1) * ROW_H + R * 2 : 40;
   const dpr = window.devicePixelRatio || 1;
   canvas.width = cssW * dpr;
@@ -541,9 +591,10 @@ function draw() {
       if (!p) continue;
       const isSelectedEdge =
         selected && selected.after === n.id && selected.before === pid;
-      ctx.strokeStyle = n.color;
+      const isPrimeEdge = n.prime && p.prime;
+      ctx.strokeStyle = isSelectedEdge ? SEL_EDGE : isPrimeEdge ? CURRENT_EDGE : ALT_EDGE;
       ctx.lineWidth = isSelectedEdge ? 3.5 : 2.5;
-      ctx.globalAlpha = isSelectedEdge ? 1 : n.onCurrentPath ? 0.95 : 0.45;
+      ctx.globalAlpha = isSelectedEdge ? 1 : isPrimeEdge ? 0.95 : 0.45;
       edgePath(n, p);
       ctx.stroke();
     }
@@ -551,38 +602,20 @@ function draw() {
   ctx.globalAlpha = 1;
   ctx.lineWidth = 2.5;
 
-  // Nodes on top. Working copy = hollow ring. Selection recolors the
-  // pressed anchor and its parent green (no glow); hover enlarges.
+  // Nodes on top. Prime nodes are blue, alternatives are gray. Selection
+  // recolors the pressed anchor green and its parent red; hover enlarges.
   for (const n of nodes) {
     const isAfter = selected && selected.after === n.id;
     const isBefore = selected && selected.before === n.id;
     const isHover = hoverId === n.id;
-    const color = isAfter || isBefore ? SEL_GREEN : n.color;
+    const color = isBefore ? SEL_RED : isAfter ? SEL_GREEN : n.prime ? CURRENT_EDGE : ALT_EDGE;
     const r = R + (isHover ? 2 : 0) + (isAfter || isBefore ? 1 : 0);
 
-    ctx.globalAlpha = n.onCurrentPath || n.current || isAfter || isBefore ? 1 : 0.55;
-
-    if (n.current && !isAfter && !isBefore) {
-      ctx.strokeStyle = color;
-      ctx.lineWidth = 3;
-      ctx.beginPath();
-      ctx.arc(n.x, n.y, r, 0, Math.PI * 2);
-      ctx.stroke();
-      ctx.lineWidth = 2.5;
-    } else {
-      ctx.fillStyle = color;
-      ctx.beginPath();
-      ctx.arc(n.x, n.y, r, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.fillStyle = "rgba(0,0,0,0.25)";
-      ctx.beginPath();
-      ctx.arc(n.x, n.y, Math.max(r - 3.5, 1.5), 0, Math.PI * 2);
-      ctx.fill();
-      ctx.fillStyle = color;
-      ctx.beginPath();
-      ctx.arc(n.x, n.y, Math.max(r - 4.5, 1), 0, Math.PI * 2);
-      ctx.fill();
-    }
+    ctx.globalAlpha = n.prime || n.current || isAfter || isBefore ? 1 : 0.55;
+    ctx.fillStyle = color;
+    ctx.beginPath();
+    ctx.arc(n.x, n.y, r, 0, Math.PI * 2);
+    ctx.fill();
   }
   ctx.globalAlpha = 1;
 }
@@ -595,6 +628,21 @@ function hit(ev) {
 
 const canvas = document.getElementById("c");
 const tip = document.getElementById("tip");
+
+function showTip(n, ev) {
+  tip.innerHTML =
+    "<div>" + escapeHtml(n.label) + "</div>" +
+    "<div class='time'>" + escapeHtml(n.time) + "</div>";
+  tip.style.display = "block";
+  const pad = 12;
+  tip.style.left = Math.min(ev.clientX + pad, window.innerWidth - tip.offsetWidth - 4) + "px";
+  tip.style.top = (ev.clientY + pad) + "px";
+}
+
+function hideTip() {
+  tip.style.display = "none";
+}
+
 canvas.addEventListener("mousemove", (ev) => {
   const n = hit(ev);
   const newHover = n ? n.id : null;
@@ -604,18 +652,14 @@ canvas.addEventListener("mousemove", (ev) => {
   }
   if (n) {
     canvas.style.cursor = "pointer";
-    tip.innerHTML = "<div>" + escapeHtml(n.label) + "</div><div class='time'>" + escapeHtml(n.time) + "</div>";
-    tip.style.display = "block";
-    const pad = 12;
-    tip.style.left = Math.min(ev.clientX + pad, window.innerWidth - tip.offsetWidth - 4) + "px";
-    tip.style.top = (ev.clientY + pad) + "px";
+    showTip(n, ev);
   } else {
     canvas.style.cursor = "default";
-    tip.style.display = "none";
+    hideTip();
   }
 });
 canvas.addEventListener("mouseleave", () => {
-  tip.style.display = "none";
+  hideTip();
   if (hoverId) { hoverId = null; draw(); }
 });
 canvas.addEventListener("click", (ev) => {
@@ -626,6 +670,7 @@ canvas.addEventListener("click", (ev) => {
     vscode.postMessage({ type: "select", id: n.id });
   }
 });
+window.addEventListener("resize", () => draw());
 
 function escapeHtml(s) {
   return String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -637,10 +682,15 @@ window.addEventListener("message", (ev) => {
   if (msg.type === "model") {
     msgEl.textContent = "";
     const firstLoad = !nodes.length;
+    modelRows = (msg.model && msg.model.rows) || [];
     layout(msg.model);
     draw();
     if (!nodes.length) msgEl.textContent = "(no anchors yet)";
     if (firstLoad) window.scrollTo(0, document.body.scrollHeight);
+  } else if (msg.type === "prime") {
+    primeId = msg.id;
+    layout({ rows: modelRows });
+    draw();
   } else if (msg.type === "error") {
     msgEl.textContent = msg.message;
   }
@@ -698,6 +748,7 @@ async function checkBinary() {
   }
 }
 
+
 // ---------------------------------------------------------------- activate
 
 function activate(context) {
@@ -710,13 +761,30 @@ function activate(context) {
   context.subscriptions.push(tree);
   context.subscriptions.push(vscode.window.registerFileDecorationProvider(provider));
 
+  let timelineSelection = null;
+  const setTimelineSelection = (id) => {
+    timelineSelection = id || null;
+    vscode.commands.executeCommand("setContext", "flashpoint.timelineAnchorSelected", !!timelineSelection);
+  };
+
+  async function revealTimelinePair(after, before) {
+    try { await vscode.commands.executeCommand("workbench.actions.treeView.flashpoint.tree.collapseAll"); } catch { /* command varies by host */ }
+    for (const id of [before, after].filter(Boolean)) {
+      const item = provider._ckptItems.get(id);
+      if (!item) continue;
+      try {
+        await tree.reveal(item, { expand: true, select: id === after, focus: false });
+      } catch {
+        // Off-stage anchors may not be materialized in the current tree.
+      }
+    }
+  }
+
   // Timeline canvas: click a node → diff vs parent + expand in the tree.
   const timeline = new TimelineWebviewProvider(async (id) => {
-    await openAnchorChanges(id, provider);
-    const item = provider._ckptItems.get(id);
-    if (item) {
-      try { await tree.reveal(item, { expand: true, select: true, focus: false }); } catch { /* off-stage anchor */ }
-    }
+    setTimelineSelection(id);
+    const before = await openAnchorChanges(id, provider);
+    await revealTimelinePair(id, before);
   });
   context.subscriptions.push(
     vscode.window.registerWebviewViewProvider("flashpoint.timeline", timeline)
@@ -750,10 +818,29 @@ function activate(context) {
   cmd("flashpoint.anchor", () =>
     runUserCommand(["anchor", "--speedster", "human", "--session", "human"], "Anchored.", provider));
   cmd("flashpoint.timetravel", (item) => timetravelWithPreview(item, provider));
+  cmd("flashpoint.timelinePrime", () => {
+    if (timelineSelection) timeline.makePrime(timelineSelection);
+  });
+  cmd("flashpoint.timelineTravel", async () => {
+    if (!timelineSelection) return;
+    await timetravelWithPreview({ hash: timelineSelection }, provider);
+    provider.refresh();
+    timeline.update();
+  });
   cmd("flashpoint.openDiff", (item) => openDiff(item, provider));
   cmd("flashpoint.compareCurrent", (item) => compareCurrent(item));
   cmd("flashpoint.status", () => showStatusDoc());
   cmd("flashpoint.recheck", () => refreshPrereqs());
+  // Setup wizard (jjckpt-vscode flow): binary check -> agent tick list ->
+  // `fp setup --agents ... --yes`. Lives in setup.js.
+  const afterSetup = () => {
+    resolvedBin = null; // a fresh install may resolve differently now
+    refreshPrereqs();
+  };
+  cmd("flashpoint.setup", () => setup.runSetup(context, resolveBin, afterSetup));
+  cmd("flashpoint.check", async () => {
+    if (await setup.showCheck(resolveBin)) setup.runSetup(context, resolveBin, afterSetup);
+  });
 
   // Status bar: quick anchor.
   const statusItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100);
@@ -799,8 +886,9 @@ function activate(context) {
     const ok = await checkBinary();
     vscode.commands.executeCommand("setContext", "flashpoint.fpMissing", !ok);
     provider.setPrereq(ok);
+    return ok;
   }
-  refreshPrereqs();
+  refreshPrereqs().then(() => setup.maybePrompt(context, resolveBin, afterSetup));
 
   // Keep the store out of the explorer.
   const files = vscode.workspace.getConfiguration("files");
