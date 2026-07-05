@@ -454,13 +454,35 @@ fn command_texts(file: &Path) -> Vec<String> {
     out
 }
 
-/// The quoted binary path preceding `needle_pos` in a hook command,
-/// i.e. the `<exe>` of `"<exe>" hook --speedster ...`.
+/// The binary path preceding `needle_pos` in a hook command.
+///
+/// Supports the direct form (`"<exe>" hook ...`) and Windows best-effort
+/// wrappers (`cmd /C ""<exe>" hook ... || exit /B 0"`).
 fn embedded_exe(text: &str, needle_pos: usize) -> Option<PathBuf> {
     let before = text[..needle_pos].trim_end();
-    let closing = before.strip_suffix('"')?;
-    let start = closing.rfind('"')?;
-    Some(PathBuf::from(&closing[start + 1..]))
+    if let Some(closing) = before.strip_suffix('"') {
+        if let Some(start) = closing.rfind('"') {
+            return Some(PathBuf::from(&closing[start + 1..]));
+        }
+    }
+
+    #[cfg(windows)]
+    {
+        if let Some(exe_end) = before.to_ascii_lowercase().rfind(".exe") {
+            let exe_end = exe_end + ".exe".len();
+            let prefix = &before[..exe_end];
+            let start = prefix
+                .rfind('"')
+                .or_else(|| prefix.rfind(' '))
+                .map_or(0, |i| i + 1);
+            let path = prefix[start..].trim_matches('"');
+            if !path.is_empty() {
+                return Some(PathBuf::from(path));
+            }
+        }
+    }
+
+    None
 }
 
 fn hook_state(slug: &str, home: &Path) -> HookState {
@@ -573,9 +595,9 @@ fn install_hooks(slug: &str, home: &Path, exe: &Path) -> Result<PathBuf> {
         "codex" => {
             let file = home.join(".codex").join("hooks.json");
             merge_json(&file, |j| {
-                upsert(j, "Stop", json!({ "hooks": [{ "type": "command", "command": post, "statusMessage": "Saving anchor" }] }));
+                upsert(j, "Stop", json!({ "hooks": [{ "type": "command", "command": best_effort(&post), "statusMessage": "Saving anchor" }] }));
                 // Payload carries prompt + session_id + cwd (same field names as Claude Code).
-                upsert(j, "UserPromptSubmit", json!({ "hooks": [{ "type": "command", "command": pre, "statusMessage": "Saving safepoint", "timeout": 30 }] }));
+                upsert(j, "UserPromptSubmit", json!({ "hooks": [{ "type": "command", "command": best_effort(&pre), "statusMessage": "Saving safepoint", "timeout": 30 }] }));
             })?;
             file
         }
@@ -645,6 +667,16 @@ fn install_hooks(slug: &str, home: &Path, exe: &Path) -> Result<PathBuf> {
         other => anyhow::bail!("no hook wiring for '{other}'"),
     };
     Ok(file)
+}
+
+/// Hooks are a safety net, not the user's primary command. Keep setup visible
+/// through `fp check`, but don't let an anchor failure fail the agent turn.
+fn best_effort(command: &str) -> String {
+    if cfg!(windows) {
+        format!("cmd /C \"{command} || exit /B 0\"")
+    } else {
+        format!("{command} || true")
+    }
 }
 
 /// OpenCode has no hook config — it loads JS plugins. Ported from jjckpt:
