@@ -454,13 +454,35 @@ fn command_texts(file: &Path) -> Vec<String> {
     out
 }
 
-/// The quoted binary path preceding `needle_pos` in a hook command,
-/// i.e. the `<exe>` of `"<exe>" hook --speedster ...`.
+/// The binary path preceding `needle_pos` in a hook command.
+///
+/// Supports the direct form (`"<exe>" hook ...`) and Windows best-effort
+/// wrappers (`cmd /C ""<exe>" hook ... || exit /B 0"`).
 fn embedded_exe(text: &str, needle_pos: usize) -> Option<PathBuf> {
     let before = text[..needle_pos].trim_end();
-    let closing = before.strip_suffix('"')?;
-    let start = closing.rfind('"')?;
-    Some(PathBuf::from(&closing[start + 1..]))
+    if let Some(closing) = before.strip_suffix('"') {
+        if let Some(start) = closing.rfind('"') {
+            return Some(PathBuf::from(&closing[start + 1..]));
+        }
+    }
+
+    #[cfg(windows)]
+    {
+        if let Some(exe_end) = before.to_ascii_lowercase().rfind(".exe") {
+            let exe_end = exe_end + ".exe".len();
+            let prefix = &before[..exe_end];
+            let start = prefix
+                .rfind('"')
+                .or_else(|| prefix.rfind(' '))
+                .map_or(0, |i| i + 1);
+            let path = prefix[start..].trim_matches('"');
+            if !path.is_empty() {
+                return Some(PathBuf::from(path));
+            }
+        }
+    }
+
+    None
 }
 
 fn hook_state(slug: &str, home: &Path) -> HookState {
@@ -565,17 +587,17 @@ fn install_hooks(slug: &str, home: &Path, exe: &Path) -> Result<PathBuf> {
         "claude-code" => {
             let file = home.join(".claude").join("settings.json");
             merge_json(&file, |j| {
-                upsert(j, "Stop", json!({ "hooks": [{ "type": "command", "command": format!("{post} || true") }] }));
-                upsert(j, "UserPromptSubmit", json!({ "hooks": [{ "type": "command", "command": format!("{pre} || true") }] }));
+                upsert(j, "Stop", json!({ "hooks": [{ "type": "command", "command": best_effort(&post) }] }));
+                upsert(j, "UserPromptSubmit", json!({ "hooks": [{ "type": "command", "command": best_effort(&pre) }] }));
             })?;
             file
         }
         "codex" => {
             let file = home.join(".codex").join("hooks.json");
             merge_json(&file, |j| {
-                upsert(j, "Stop", json!({ "hooks": [{ "type": "command", "command": post, "statusMessage": "Saving anchor" }] }));
+                upsert(j, "Stop", json!({ "hooks": [{ "type": "command", "command": best_effort(&post), "statusMessage": "Saving anchor" }] }));
                 // Payload carries prompt + session_id + cwd (same field names as Claude Code).
-                upsert(j, "UserPromptSubmit", json!({ "hooks": [{ "type": "command", "command": pre, "statusMessage": "Saving safepoint", "timeout": 30 }] }));
+                upsert(j, "UserPromptSubmit", json!({ "hooks": [{ "type": "command", "command": best_effort(&pre), "statusMessage": "Saving safepoint", "timeout": 30 }] }));
             })?;
             file
         }
@@ -584,20 +606,20 @@ fn install_hooks(slug: &str, home: &Path, exe: &Path) -> Result<PathBuf> {
             merge_json(&file, |j| {
                 let map = j.as_object_mut().expect("object");
                 map.entry("version").or_insert(json!(1));
-                upsert(j, "stop", json!({ "command": post, "timeout": 10 }));
+                upsert(j, "stop", json!({ "command": best_effort(&post), "timeout": 10 }));
                 // beforeSubmitPrompt payload carries conversation_id + prompt, which
                 // `fp hook` parses for the Human safepoint and the anchor title.
-                upsert(j, "beforeSubmitPrompt", json!({ "command": pre, "timeout": 10 }));
+                upsert(j, "beforeSubmitPrompt", json!({ "command": best_effort(&pre), "timeout": 10 }));
             })?;
             file
         }
         "gemini" => {
             let file = home.join(".gemini").join("settings.json");
             merge_json(&file, |j| {
-                upsert(j, "AfterAgent", json!({ "hooks": [{ "type": "command", "command": post, "name": "flashpoint-anchor", "timeout": 10000 }] }));
+                upsert(j, "AfterAgent", json!({ "hooks": [{ "type": "command", "command": best_effort(&post), "name": "flashpoint-anchor", "timeout": 10000 }] }));
                 // BeforeAgent payload carries session_id + cwd + prompt (Claude Code
                 // field names), so `fp hook` parses it as-is.
-                upsert(j, "BeforeAgent", json!({ "hooks": [{ "type": "command", "command": pre, "name": "flashpoint-safepoint", "timeout": 10000 }] }));
+                upsert(j, "BeforeAgent", json!({ "hooks": [{ "type": "command", "command": best_effort(&pre), "name": "flashpoint-safepoint", "timeout": 10000 }] }));
             })?;
             file
         }
@@ -613,8 +635,8 @@ fn install_hooks(slug: &str, home: &Path, exe: &Path) -> Result<PathBuf> {
                 map.insert(
                     "flashpoint".into(),
                     json!({
-                        "Stop": [{ "hooks": [{ "type": "command", "command": post, "timeout": 10 }] }],
-                        "PreInvocation": [{ "hooks": [{ "type": "command", "command": pre, "timeout": 10 }] }],
+                        "Stop": [{ "hooks": [{ "type": "command", "command": best_effort(&post), "timeout": 10 }] }],
+                        "PreInvocation": [{ "hooks": [{ "type": "command", "command": best_effort(&pre), "timeout": 10 }] }],
                     }),
                 );
             })?;
@@ -626,8 +648,8 @@ fn install_hooks(slug: &str, home: &Path, exe: &Path) -> Result<PathBuf> {
             retire_jjckpt_file(&home.join(".copilot").join("hooks").join("jjckpt.json"));
             let file = home.join(".copilot").join("hooks").join("flashpoint.json");
             merge_json(&file, |j| {
-                upsert(j, "Stop", json!({ "type": "command", "command": post, "timeout": 10 }));
-                upsert(j, "UserPromptSubmit", json!({ "type": "command", "command": pre, "timeout": 10 }));
+                upsert(j, "Stop", json!({ "type": "command", "command": best_effort(&post), "timeout": 10 }));
+                upsert(j, "UserPromptSubmit", json!({ "type": "command", "command": best_effort(&pre), "timeout": 10 }));
             })?;
             file
         }
@@ -645,6 +667,16 @@ fn install_hooks(slug: &str, home: &Path, exe: &Path) -> Result<PathBuf> {
         other => anyhow::bail!("no hook wiring for '{other}'"),
     };
     Ok(file)
+}
+
+/// Hooks are a safety net, not the user's primary command. Keep setup visible
+/// through `fp check`, but don't let an anchor failure fail the agent turn.
+fn best_effort(command: &str) -> String {
+    if cfg!(windows) {
+        format!("cmd /C \"{command} || exit /B 0\"")
+    } else {
+        format!("{command} || true")
+    }
 }
 
 /// OpenCode has no hook config — it loads JS plugins. Ported from jjckpt:
