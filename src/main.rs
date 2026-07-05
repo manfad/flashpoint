@@ -6,6 +6,7 @@ mod meta;
 mod porcelain;
 mod repo;
 mod safezone;
+mod setup;
 mod timeline;
 mod timetravel;
 
@@ -64,6 +65,28 @@ enum Command {
         /// pre (turn about to start) or post (turn ended).
         #[arg(long)]
         phase: String,
+    },
+    /// Is everything set up? Binary, PATH, excludes, per-speedster hooks
+    /// (read-only; exits 1 if anything needs attention).
+    Check,
+    /// Wire speedster hooks + put `fp` on PATH (interactive; safe to re-run).
+    Setup {
+        /// Same as `fp check`.
+        #[arg(long, conflicts_with_all = ["agents", "all", "yes", "no_path"])]
+        check: bool,
+        /// Comma-separated speedster slugs to wire (skips the interactive picker).
+        #[arg(long, value_delimiter = ',')]
+        agents: Vec<String>,
+        /// Wire every known speedster.
+        #[arg(long, conflicts_with = "agents")]
+        all: bool,
+        /// Don't ask for confirmation.
+        #[arg(short, long)]
+        yes: bool,
+        /// Skip the stable-binary copy and PATH changes (hooks then reference
+        /// the currently running executable).
+        #[arg(long)]
+        no_path: bool,
     },
     /// Machine-readable timeline JSON for UI surfaces (porcelain).
     #[command(name = "_timeline", hide = true)]
@@ -148,6 +171,14 @@ fn main() -> Result<()> {
         }
         Command::Hook { speedster, phase } => {
             hook::run(&speedster, &phase)?;
+        }
+        Command::Check => setup::check()?,
+        Command::Setup { check, agents, all, yes, no_path } => {
+            if check {
+                setup::check()?;
+            } else {
+                setup::run(agents, all, yes, no_path)?;
+            }
         }
         Command::Timeline => {
             let fp = Fp::open(&cwd)?;
