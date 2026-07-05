@@ -16,21 +16,21 @@ whole setup.
 
 ## Install
 
-The native executable is `fp`. The npm package is `@manfad/flashpoint`
+The native executable is `fp`. The npm package is `@manfad99/flashpoint`
 (unscoped `fp`, `fpoint`, and `fpt` are already taken on npm); it installs
 `fp`, `flashpoint`, and `flashp` launchers.
 
 Run without a permanent install:
 
 ```sh
-npx @manfad/flashpoint --help
-npx @manfad/flashpoint anchor
+npx @manfad99/flashpoint --help
+npx @manfad99/flashpoint anchor
 ```
 
 Install globally:
 
 ```sh
-npm install -g @manfad/flashpoint
+npm install -g @manfad99/flashpoint
 fp --help
 fp setup   # put fp on PATH + wire agent hooks (see below)
 ```

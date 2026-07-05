@@ -14,7 +14,7 @@ const os = require("os");
 const path = require("path");
 
 const SETUP_PROMPT_SEEN_KEY = "flashpoint.setupPromptSeen";
-const INSTALL_CMD = "npm install -g @manfad/flashpoint";
+const INSTALL_CMD = "npm install -g @manfad99/flashpoint";
 
 function home() {
   return os.homedir();
