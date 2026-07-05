@@ -1,6 +1,7 @@
 /target
 *.vsix
 node_modules/
+npm/bin/fp-*
 # flashpoint/jjckpt checkpoint stores are local-only
 .jj/
 .fp/
