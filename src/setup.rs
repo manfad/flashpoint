@@ -587,8 +587,8 @@ fn install_hooks(slug: &str, home: &Path, exe: &Path) -> Result<PathBuf> {
         "claude-code" => {
             let file = home.join(".claude").join("settings.json");
             merge_json(&file, |j| {
-                upsert(j, "Stop", json!({ "hooks": [{ "type": "command", "command": format!("{post} || true") }] }));
-                upsert(j, "UserPromptSubmit", json!({ "hooks": [{ "type": "command", "command": format!("{pre} || true") }] }));
+                upsert(j, "Stop", json!({ "hooks": [{ "type": "command", "command": best_effort(&post) }] }));
+                upsert(j, "UserPromptSubmit", json!({ "hooks": [{ "type": "command", "command": best_effort(&pre) }] }));
             })?;
             file
         }
@@ -606,20 +606,20 @@ fn install_hooks(slug: &str, home: &Path, exe: &Path) -> Result<PathBuf> {
             merge_json(&file, |j| {
                 let map = j.as_object_mut().expect("object");
                 map.entry("version").or_insert(json!(1));
-                upsert(j, "stop", json!({ "command": post, "timeout": 10 }));
+                upsert(j, "stop", json!({ "command": best_effort(&post), "timeout": 10 }));
                 // beforeSubmitPrompt payload carries conversation_id + prompt, which
                 // `fp hook` parses for the Human safepoint and the anchor title.
-                upsert(j, "beforeSubmitPrompt", json!({ "command": pre, "timeout": 10 }));
+                upsert(j, "beforeSubmitPrompt", json!({ "command": best_effort(&pre), "timeout": 10 }));
             })?;
             file
         }
         "gemini" => {
             let file = home.join(".gemini").join("settings.json");
             merge_json(&file, |j| {
-                upsert(j, "AfterAgent", json!({ "hooks": [{ "type": "command", "command": post, "name": "flashpoint-anchor", "timeout": 10000 }] }));
+                upsert(j, "AfterAgent", json!({ "hooks": [{ "type": "command", "command": best_effort(&post), "name": "flashpoint-anchor", "timeout": 10000 }] }));
                 // BeforeAgent payload carries session_id + cwd + prompt (Claude Code
                 // field names), so `fp hook` parses it as-is.
-                upsert(j, "BeforeAgent", json!({ "hooks": [{ "type": "command", "command": pre, "name": "flashpoint-safepoint", "timeout": 10000 }] }));
+                upsert(j, "BeforeAgent", json!({ "hooks": [{ "type": "command", "command": best_effort(&pre), "name": "flashpoint-safepoint", "timeout": 10000 }] }));
             })?;
             file
         }
@@ -635,8 +635,8 @@ fn install_hooks(slug: &str, home: &Path, exe: &Path) -> Result<PathBuf> {
                 map.insert(
                     "flashpoint".into(),
                     json!({
-                        "Stop": [{ "hooks": [{ "type": "command", "command": post, "timeout": 10 }] }],
-                        "PreInvocation": [{ "hooks": [{ "type": "command", "command": pre, "timeout": 10 }] }],
+                        "Stop": [{ "hooks": [{ "type": "command", "command": best_effort(&post), "timeout": 10 }] }],
+                        "PreInvocation": [{ "hooks": [{ "type": "command", "command": best_effort(&pre), "timeout": 10 }] }],
                     }),
                 );
             })?;
@@ -648,8 +648,8 @@ fn install_hooks(slug: &str, home: &Path, exe: &Path) -> Result<PathBuf> {
             retire_jjckpt_file(&home.join(".copilot").join("hooks").join("jjckpt.json"));
             let file = home.join(".copilot").join("hooks").join("flashpoint.json");
             merge_json(&file, |j| {
-                upsert(j, "Stop", json!({ "type": "command", "command": post, "timeout": 10 }));
-                upsert(j, "UserPromptSubmit", json!({ "type": "command", "command": pre, "timeout": 10 }));
+                upsert(j, "Stop", json!({ "type": "command", "command": best_effort(&post), "timeout": 10 }));
+                upsert(j, "UserPromptSubmit", json!({ "type": "command", "command": best_effort(&pre), "timeout": 10 }));
             })?;
             file
         }
